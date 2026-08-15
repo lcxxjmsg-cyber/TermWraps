@@ -77,6 +77,13 @@ function Start-RdpService {
     Start-Service -Name UmRdpService -ErrorAction SilentlyContinue
 }
 
+function Restart-RdpService {
+    Stop-RdpService
+    Start-RdpService
+    Start-Sleep -Seconds 1
+    Start-Service -Name UmRdpService -ErrorAction SilentlyContinue
+}
+
 function Deploy-TermWrapBinaries {
     param([switch]$UmWrap,[switch]$EndpWrap,[switch]$SkipRestart)
     $arch = if ([Environment]::Is64BitProcess) { 'x64' } else { 'x86' }

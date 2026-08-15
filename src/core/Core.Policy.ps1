@@ -127,7 +127,7 @@ function Add-RdpwrapDefenderExclusions {
 
 function Set-RdpPort {
     if (-not (Test-Admin)) { Write-E "$(T 'admin_required')"; Write-Host ""; cmd /c pause 2>&1 | Out-Null; return }
-    $s = Get-RdpStatus
+    $s = Get-TermWrapStatus
     Show-ConfigMenu (T 'menu_port_title') @("$(T 'menu_port_cur'): $($s.Port)","-","$(T 'menu_port_prompt')")
     $p = Read-Host "> "
     if ($p -match '^\d+$' -and [int]$p -ge 1024 -and [int]$p -le 65535) {
