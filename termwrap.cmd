@@ -8,7 +8,7 @@ net session >nul 2>&1
 if not %errorlevel%==0 (
     echo Requesting administrator privileges...
     echo Please click Yes on the UAC prompt.
-    powershell -NoProfile -Command "Start-Process -FilePath '%~dp0termwrap.ps1' -Verb RunAs"
+    powershell -NoProfile -Command "Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','""%~dp0termwrap.ps1""'"
     exit /b
 )
 
