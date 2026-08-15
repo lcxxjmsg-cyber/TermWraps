@@ -1,3 +1,10 @@
 # local caches / build products
 src/bin/symbols/
 *.log
+
+# dev toolchain artifacts (build/ sources are committed, products are not)
+build/src/
+build/out/
+build/obj/
+build/cache/
+build/sym-tools/
