@@ -1,0 +1,3 @@
+# local caches / build products
+src/bin/symbols/
+*.log

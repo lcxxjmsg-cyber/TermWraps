@@ -1,0 +1,11 @@
+Windows Registry Editor Version 5.00
+
+; 让 .ps1 可以双击直接运行（无需先打开管理员 PowerShell）。
+; 导入后，双击 termwrap.ps1 即会运行，并由脚本内部自动申请管理员权限。
+; 如想撤销关联，删除 HKCU\Software\Classes\.ps1 与 PowerShellScript 键即可。
+
+[HKEY_CURRENT_USER\Software\Classes\.ps1]
+@="PowerShellScript"
+
+[HKEY_CURRENT_USER\Software\Classes\PowerShellScript\shell\open\command]
+@="\"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -ExecutionPolicy Bypass -File \"%1\" %*"
