@@ -118,7 +118,10 @@ function w{param($m)"$(Get-Date -F 'yyyy-MM-dd HH:mm:ss') $m"|Out-File $l -Appen
 $dll="$env:ProgramFiles\RDP Wrapper\TermWrap.dll"
 if(!(Test-Path $dll)){w"TermWrap.dll missing";exit 0}
 $svcDll=(Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\TermService\Parameters' -Name ServiceDll -EA 0).ServiceDll
-if($svcDll -notlike '*TermWrap.dll'){w"ServiceDll not pointing to TermWrap.dll";exit 0}
+if($svcDll -notlike '*TermWrap.dll'){
+  w"ServiceDll not pointing to TermWrap.dll (repairing)";try{Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\TermService\Parameters' -Name ServiceDll -Value '%ProgramFiles%\RDP Wrapper\TermWrap.dll' -EA Stop;w"ServiceDll repaired";Restart-Service TermService -Force -EA 0;Start-Sleep 2}catch{w"repair failed: $_"};exit 0}
+$stateFile="$env:ProgramData\rdpwarp\termwrap-state.json"
+if(Test-Path $stateFile){try{$st=Get-Content $stateFile -Raw -EA 0|ConvertFrom-Json;if($st.FileHashes.TermWrap.dll){$h=(Get-FileHash $dll -Algorithm SHA256 -EA 0).Hash;if($h-and$h-ne$st.FileHashes.TermWrap.dll){w"TermWrap.dll hash mismatch (integrity alert)"}}}catch{}}
 $svc=Get-Service TermService -EA 0
 if(!$svc-or$svc.Status-ne'Running'){w"TermService not running; restarting";Restart-Service TermService -Force -EA 0;exit 0}
 $p=(Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name PortNumber -EA 0).PortNumber
@@ -132,7 +135,7 @@ try{$h=$c.BeginConnect('127.0.0.1',$p,$null,$null);if(!$h.AsyncWaitHandle.WaitOn
         $scriptBody | Out-File $script:WATCHDOG_SCRIPT -Encoding ASCII -Force
         $a = New-ScheduledTaskAction -Execute powershell.exe -Argument "-NoP -W Hidden -Exec Bypass -File `"$($script:WATCHDOG_SCRIPT)`""
         $t1 = New-ScheduledTaskTrigger -AtStartup
-        $t2 = New-ScheduledTaskTrigger -Daily -At 03:00
+        $t2 = New-ScheduledTaskTrigger -Daily -At 03:00 -RepetitionInterval (New-TimeSpan -Minutes 30)
         $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -Hidden
         Unregister-ScheduledTask -TaskName $script:WATCHDOG_TASK -Confirm:$false -ErrorAction SilentlyContinue
         Register-ScheduledTask -TaskName $script:WATCHDOG_TASK -Action $a -Trigger $t1,$t2 -Settings $set -User "NT AUTHORITY\SYSTEM" -RunLevel Highest -Force | Out-Null

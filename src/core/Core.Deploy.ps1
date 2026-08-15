@@ -37,14 +37,28 @@ function Save-TermWrapState {
     param([bool]$UmWrap)
     $ts = (Get-ItemProperty -Path $REG_TS -Name ServiceDll -ErrorAction SilentlyContinue).ServiceDll
     $um = (Get-ItemProperty -Path $script:REG_UMRDP_PARAMS -Name ServiceDll -ErrorAction SilentlyContinue).ServiceDll
+    $au = (Get-ItemProperty -Path $script:REG_AUDIO_ENUM -Name '(default)' -ErrorAction SilentlyContinue).'(default)'
+    $hashes = @{}
+    foreach ($fn in @('TermWrap.dll','UmWrap.dll','EndpWrap.dll')) {
+        $p = Join-Path $script:RDPWRAP_DIR $fn
+        if (Test-Path $p) { $hashes[$fn] = (Get-FileHash $p -Algorithm SHA256).Hash }
+    }
+    $exclusions = @()
+    if (Get-Command Get-MpPreference -ErrorAction SilentlyContinue) {
+        $existing = @((Get-MpPreference -ErrorAction SilentlyContinue).ExclusionPath)
+        foreach ($path in @($script:RDPWRAP_DIR, 'C:\rdpwarp', "$env:ProgramFiles\RDP Wrapper")) {
+            if ($existing -notcontains $path) { $exclusions += $path }
+        }
+    }
     $state = [PSCustomObject]@{
-        Schema=1; SavedAt=(Get-Date).ToString('o')
+        Schema=2; SavedAt=(Get-Date).ToString('o')
         TermServiceDll=$ts; UmRdpServiceDll=$um
-        UmWrap=$UmWrap; EndpWrap=$false
+        UmWrap=$UmWrap; EndpWrapActive=($au -eq 'EndpWrap.dll')
+        FileHashes=$hashes; DefenderAdded=@($exclusions)
     }
     try {
         New-Item -ItemType Directory -Path (Split-Path $script:TERMWRAP_STATE) -Force -ErrorAction Stop | Out-Null
-        $state | ConvertTo-Json -Depth 4 | Out-File $script:TERMWRAP_STATE -Encoding UTF8 -Force
+        $state | ConvertTo-Json -Depth 5 | Out-File $script:TERMWRAP_STATE -Encoding UTF8 -Force
         return $true
     } catch { Write-E "状态保存失败: $_"; return $false }
 }
@@ -85,7 +99,7 @@ function Restart-RdpService {
 }
 
 function Deploy-TermWrapBinaries {
-    param([switch]$UmWrap,[switch]$EndpWrap,[switch]$SkipRestart)
+    param([switch]$UmWrap,[switch]$EndpWrap,[switch]$SkipRestart,[switch]$KeepOnFail)
     $arch = if ([Environment]::Is64BitProcess) { 'x64' } else { 'x86' }
     if (-not (Test-Admin)) { Write-E "需要管理员权限"; return $false }
     if (-not (Test-TermWrapBinaries $arch)) { Write-E "TermWrap 二进制缺失或哈希不符 ($arch)"; return $false }
@@ -147,8 +161,13 @@ function Deploy-TermWrapBinaries {
             return $true
         }
         Write-E "热启动后未达 Healthy（$($st.HealthMessage)）"
-        Write-W "可能需要重启系统才能生效（ServiceDll 变更的兜底路径）"
-        Write-I "执行: shutdown /r /t 0"
+        if ($KeepOnFail) {
+            Write-W "已按 -KeepOnFail 保留配置；可能需要重启系统才能生效（ServiceDll 变更的兜底路径）"
+            Write-I "执行: shutdown /r /t 0"
+            return $false
+        }
+        & $rollback $deployedFiles
+        Write-E "热启动验证失败，已自动回滚到原配置（如需保留并重启系统，请加 -KeepOnFail）"
         return $false
     } catch {
         & $rollback $deployedFiles
@@ -177,6 +196,20 @@ function Uninstall-TermWrapBinaries {
     foreach ($f in @('TermWrap.dll','UmWrap.dll','EndpWrap.dll')) {
         $p = Join-Path $script:RDPWRAP_DIR $f
         if (Test-Path $p) { Remove-Item $p -Force -ErrorAction SilentlyContinue; Write-I "已删除: $f" }
+    }
+    if ($restored -and $state.EndpWrapActive) {
+        try {
+            Set-ItemProperty -Path $script:REG_AUDIO_ENUM -Name '(default)' -Value 'rdpendp.dll' -ErrorAction Stop
+            Write-I "AudioEnumeratorDll 已还原为 rdpendp.dll"
+        } catch { Write-W "AudioEnumeratorDll 还原失败: $($_.Exception.Message)" }
+        $sys32Endp = "$env:SystemRoot\System32\EndpWrap.dll"
+        if (Test-Path $sys32Endp) { Remove-Item $sys32Endp -Force -ErrorAction SilentlyContinue; Write-I "System32\EndpWrap.dll 已删除" }
+    }
+    if ($restored -and $state.DefenderAdded -and (Get-Command Remove-MpPreference -ErrorAction SilentlyContinue)) {
+        foreach ($path in @($state.DefenderAdded)) {
+            Remove-MpPreference -ExclusionPath $path -ErrorAction SilentlyContinue
+            Write-I "Defender 排除已移除: $path"
+        }
     }
     if (Test-Path $script:TERMWRAP_STATE) { Remove-Item $script:TERMWRAP_STATE -Force -ErrorAction SilentlyContinue }
     Write-S "TermWrap 已卸载（ServiceDll 已还原）"
