@@ -1,0 +1,13 @@
+﻿# symbol cache (machine-local, not for distribution)
+src/bin/symbols/
+*.log
+
+# self-build artifacts (regenerable via build/build.ps1)
+build/src/
+build/cache/
+build/obj/
+build/out/
+
+# sym research tools (dev-only, regenerable via build.ps1)
+build/sym-tools/
+
