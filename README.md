@@ -1,4 +1,4 @@
-# TermWrapWrapper
+# TermWraps
 
 基于 **TermWrap** 的自维护 RDP 多会话控制器（独立维护分支）。通过改写 TermService 的 `ServiceDll` 指针加载包装 DLL，在无需修改系统文件的前提下启用「多会话远程桌面」以及可选的摄像头/USB、音频录制重定向。
 
