@@ -116,12 +116,20 @@ function Get-ShadowGlobal {
 function Set-ShadowGlobal {
     param([int]$Value,[switch]$Clear)
     $policy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
+    # 同时写 RDP-Tcp 监听器本地值：这才是真正对 RDP 连接生效的影子级别（本地遗留）。
+    # 只写组策略键会导致"改了没效果"，故需一并写入并重启 TermService 使监听器重读。
     if ($Clear) {
         Remove-ItemProperty -LiteralPath $policy -Name 'Shadow' -ErrorAction SilentlyContinue
-        return ($null -eq (Get-RegDword $policy 'Shadow'))
+        Remove-ItemProperty -LiteralPath $REG_POLICY_LOCAL -Name 'Shadow' -ErrorAction SilentlyContinue
+        $ok = ($null -eq (Get-RegDword $policy 'Shadow')) -and ($null -eq (Get-RegDword $REG_POLICY_LOCAL 'Shadow'))
+    } else {
+        if (-not (Set-RegDword $policy 'Shadow' $Value)) { return $false }
+        Set-RegDword $REG_POLICY_LOCAL 'Shadow' $Value | Out-Null
+        if ((Get-RegDword $policy 'Shadow') -ne $Value) { return $false }
+        $ok = ((Get-RegDword $REG_POLICY_LOCAL 'Shadow') -eq $Value)
     }
-    if (-not (Set-RegDword $policy 'Shadow' $Value)) { return $false }
-    return ((Get-RegDword $policy 'Shadow') -eq $Value)
+    Restart-RdpService
+    return $ok
 }
 
 function Set-ShadowGlobalMenu {
@@ -134,19 +142,19 @@ function Set-ShadowGlobalMenu {
             @{Label=(S 'eff');Value=(Format-ShadowValue -Value $g.Effective -Map $sv -NotConfigured $su.notcfg)}
             @{Label=(S 'legacy');Value=(Format-ShadowValue -Value $g.Legacy -Map $sv -NotConfigured $su.notcfg)}
             "-"
-            @{Label="1. $(T 'menu_shadow_off')"}
-            @{Label="2. $(T 'menu_shadow_fwp')"}
-            @{Label="3. $(T 'menu_shadow_fwo')"}
-            @{Label="4. $(T 'menu_shadow_vwp')"}
-            @{Label="5. $(T 'menu_shadow_vwo')"}
-            @{Label="6. $(S 'clear_global')"}
-            @{Label="7. $(S 'clear_legacy')"}
+            @{Label=(T 'menu_shadow_off')}
+            @{Label=(T 'menu_shadow_fwp')}
+            @{Label=(T 'menu_shadow_fwo')}
+            @{Label=(T 'menu_shadow_vwp')}
+            @{Label=(T 'menu_shadow_vwo')}
+            @{Label=(S 'clear_global')}
+            @{Label=(S 'clear_legacy')}
         )
         $c = Read-Host "> "
         switch -Regex ($c) {
             '^[1-5]$' { if (Set-ShadowGlobal -Value ([int]$c - 1)) { Write-S (S 'apply' @((S 'global'), $sv[([int]$c - 1)])); Write-I $su.apply_note } else { Write-E (S 'err_write' @((S 'global'))) } }
             '^6$' { if (Set-ShadowGlobal -Clear) { Write-S $su.gclear } else { Write-E (S 'err_write' @((S 'global'))) } }
-            '^7$' { Remove-ItemProperty -LiteralPath $REG_POLICY_LOCAL -Name 'Shadow' -ErrorAction SilentlyContinue; Write-S $su.legcleared }
+            '^7$' { Remove-ItemProperty -LiteralPath $REG_POLICY_LOCAL -Name 'Shadow' -ErrorAction SilentlyContinue; Restart-RdpService; Write-S $su.legcleared }
             '^0$' { }
             default { Write-W (T 'inv_opt'); Start-Sleep -Milliseconds 800 }
         }
@@ -184,12 +192,12 @@ function Set-ShadowUserMenu {
         Show-ConfigMenu "$(S 'user'): $($target.Name)" @(
             @{Label=(S 'cur');Value=(Format-ShadowValue -Value $cur -Map $sv -NotConfigured $su.notcfg)}
             "-"
-            @{Label="1. $(T 'menu_shadow_off')"}
-            @{Label="2. $(T 'menu_shadow_fwp')"}
-            @{Label="3. $(T 'menu_shadow_fwo')"}
-            @{Label="4. $(T 'menu_shadow_vwp')"}
-            @{Label="5. $(T 'menu_shadow_vwo')"}
-            @{Label="6. $(S 'clear_global')"}
+            @{Label=(T 'menu_shadow_off')}
+            @{Label=(T 'menu_shadow_fwp')}
+            @{Label=(T 'menu_shadow_fwo')}
+            @{Label=(T 'menu_shadow_vwp')}
+            @{Label=(T 'menu_shadow_vwo')}
+            @{Label=(S 'clear_global')}
         )
         $c = Read-Host "> "
         switch -Regex ($c) {

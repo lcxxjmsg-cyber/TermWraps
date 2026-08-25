@@ -182,9 +182,9 @@ function Set-RdpSessions {
             @{Label=(T 'menu_session_s');Value=if($null -ne $s){$s}else{(T 'unlimited')}}
             @{Label=(T 'menu_session_u');Value=if($sspu -eq 1){T 'on'}elseif($sspu -eq 0){T 'off'}else{T 'dflt'}}
             "-"
-            @{Label="1. $(T 'menu_session_m')"}
-            @{Label="2. $(T 'menu_session_t')"}
-            @{Label="3. $(T 'menu_session_r')"}
+            @{Label=(T 'menu_session_m')}
+            @{Label=(T 'menu_session_t')}
+            @{Label=(T 'menu_session_r')}
         )
         $c = Read-Host "> "
         switch ($c) {
@@ -207,8 +207,8 @@ function Set-RdpSecurity {
             @{Label=(T 'menu_security_nla');Value=$nlaStr}
             @{Label=(T 'menu_security_sl');Value=$slStr}
             "-"
-            @{Label="1. $(T 'menu_security_tn')"}
-            @{Label="2. $(T 'menu_security_ss')"}
+            @{Label=(T 'menu_security_tn')}
+            @{Label=(T 'menu_security_ss')}
         )
         $c = Read-Host "> "
         switch ($c) {
@@ -228,9 +228,9 @@ function Set-RdpDisplay {
             @{Label=(T 'menu_display_hide');Value=if($hide -eq 1){T 'on'}else{T 'off'}}
             @{Label=(T 'menu_display_ar');Value=if((Get-RegDword $REG_POLICY "fDisableAutoReconnect")-eq1){T 'off'}else{T 'dflt'}}
             "-"
-            @{Label="1. $(T 'menu_display_tm')"}
-            @{Label="2. $(T 'menu_display_th')"}
-            @{Label="3. $(T 'menu_display_ta')"}
+            @{Label=(T 'menu_display_tm')}
+            @{Label=(T 'menu_display_th')}
+            @{Label=(T 'menu_display_ta')}
         )
         $c = Read-Host "> "
         switch ($c) {
@@ -256,10 +256,10 @@ function Set-RdpTimeouts {
             @{Label=(T 'menu_timeout_idle');Value=$idleStr}
             @{Label=(T 'menu_timeout_active');Value=$sessStr}
             "-"
-            @{Label="1. $(T 'menu_timeout_sd')"}
-            @{Label="2. $(T 'menu_timeout_si')"}
-            @{Label="3. $(T 'menu_timeout_sa')"}
-            @{Label="4. $(T 'menu_timeout_reset')"}
+            @{Label=(T 'menu_timeout_sd')}
+            @{Label=(T 'menu_timeout_si')}
+            @{Label=(T 'menu_timeout_sa')}
+            @{Label=(T 'menu_timeout_reset')}
         )
         $c = Read-Host "> "
         $matched = $false

@@ -253,15 +253,20 @@ function Show-ConfigMenu { param($Title,$Items)
     Write-Host "+----------------------------------------------------+" -ForegroundColor Cyan
     $idx = 0
     foreach ($item in $Items) {
-        $idx++
         if ($item -is [string]) {
             if ($item -eq '-') { Write-Host "|  $(''.PadRight(48))|" -ForegroundColor DarkGray }
             else { Write-Host "|  $item" -ForegroundColor DarkGray }
         } else {
-            $val = if ($null -ne $item.Value) { "[$($item.Value)]" } else { "" }
-            $color = if ($item.Color) { $item.Color } else { 'White' }
-            Write-Host "|  " -NoNewline; Write-Host "$idx." -NoNewline -ForegroundColor Yellow
-            Write-Host " $($item.Label.PadRight(20)) $val" -ForegroundColor $color
+            if ($null -ne $item.Value) {
+                $val = "[$($item.Value)]"
+                $color = if ($item.Color) { $item.Color } else { 'DarkGray' }
+                Write-Host ("|  " + $item.Label.PadRight(22) + "  " + $val) -ForegroundColor $color
+            } else {
+                $idx++
+                $color = if ($item.Color) { $item.Color } else { 'White' }
+                Write-Host "|  " -NoNewline; Write-Host "$idx." -NoNewline -ForegroundColor Yellow
+                Write-Host " $($item.Label)" -ForegroundColor $color
+            }
         }
     }
     Write-Host "|                                                    |" -ForegroundColor DarkGray
