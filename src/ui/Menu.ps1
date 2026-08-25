@@ -57,9 +57,9 @@ function Show-MainMenu {
         Write-Host "  " -NoNewline; Write-Host "3." -NoNewline -ForegroundColor Yellow
         Write-Host " $(T 'menu_security_title')" -ForegroundColor White
         Write-Host "     $(T 'menu_security_desc')" -ForegroundColor DarkGray
-        Write-Host "  " -NoNewline; Write-Host "4." -NoNewline -ForegroundColor Yellow
-        Write-Host " $(T 'menu_shadow_title')" -ForegroundColor White
-        Write-Host "     $(T 'menu_shadow_desc')" -ForegroundColor DarkGray
+        Write-Host "  " -NoNewline; Write-Host "4." -NoNewline -ForegroundColor DarkGray
+        Write-Host " $(T 'menu_shadow_title')" -ForegroundColor Gray
+        Write-Host "     $(T 'menu_shadow_desc') (需 Windows Server + RDS)" -ForegroundColor Gray
         Write-Host "  " -NoNewline; Write-Host "5." -NoNewline -ForegroundColor Yellow
         Write-Host " $(T 'menu_display_title')" -ForegroundColor White
         Write-Host "     $(T 'menu_display_desc')" -ForegroundColor DarkGray
@@ -198,7 +198,7 @@ function Invoke-InteractiveMenu {
                 "1" { Invoke-TermWrapUpdate }
                 "2" { Set-RdpSessions }
                 "3" { Set-RdpSecurity }
-                "4" { Set-RdpShadowing }
+                "4" { Write-W "影子/远程控制需要 Windows Server + RDS（TermWrap 客户端版不支持），已禁用"; Start-Sleep -Seconds 2 }
                 "5" { Set-RdpDisplay }
                 "6" { Set-RdpTimeouts }
                 "7" { Set-RdpPort }
