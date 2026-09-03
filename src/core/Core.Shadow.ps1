@@ -219,6 +219,122 @@ function Set-ShadowUserMenu {
     } while ($c -ne '0')
 }
 
+function Get-RdpSessionList {
+    $out = @()
+    qwinsta 2>$null | ForEach-Object {
+        if ($_ -match '^\s*>?\s*(\S+)\s+(\S+)\s+(\d+)\s+(\S+)') {
+            $out += [PSCustomObject]@{ Ptr=$Matches[1].TrimStart('>'); User=$Matches[2]; Id=[int]$Matches[3]; State=$Matches[4] }
+        }
+    }
+    return $out
+}
+
+function Add-RdpCredential {
+    param([string]$Server, [string]$User, [string]$Password)
+    if (-not $Server -or -not $User) { return $false }
+    try {
+        if ([string]::IsNullOrEmpty($Password)) { & cmdkey /add:$Server /user:$User 2>&1 | Out-Null }
+        else { & cmdkey /add:$Server /user:$User /pass:$Password 2>&1 | Out-Null }
+        return ($LASTEXITCODE -eq 0)
+    } catch { return $false }
+}
+
+function Get-RdpRemoteSessions {
+    param([string]$Server)
+    $rows = @()
+    query session /server:$Server 2>$null | ForEach-Object {
+        if ($_ -match '^\s*>?\s*(\S+)\s+(\S+)\s+(\d+)\s+(\S+)') {
+            $rows += [PSCustomObject]@{ Ptr=$Matches[1].TrimStart('>'); User=$Matches[2]; Id=[int]$Matches[3]; State=$Matches[4] }
+        }
+    }
+    return $rows
+}
+
+function Get-EffectiveShadowMode {
+    param([string]$User)
+    if ([string]::IsNullOrWhiteSpace($User)) { return $null }
+    $value = $null; $src = 'default'
+    $lu = Get-LocalUser -Name $User -ErrorAction SilentlyContinue
+    if ($lu -and $lu.SID) {
+        $pv = Get-ShadowUserValue -Sid $lu.SID.Value
+        if ($null -ne $pv) { $value = [int]$pv; $src = 'per-user' }
+    }
+    if ($null -eq $value) {
+        $g = Get-ShadowGlobal
+        if ($null -ne $g.Effective) { $value = [int]$g.Effective; $src = 'global' }
+    }
+    if ($null -eq $value) { $value = 1; $src = 'default' }
+    return [PSCustomObject]@{ User=$User; Value=$value; Source=$src }
+}
+
+function Invoke-RdpShadow {
+    param([int]$SessionId = 0, [string]$Remote = '', [string]$User = '', [string]$Password = '', [switch]$ForceConsent, [switch]$ForceNoConsent, [switch]$ViewOnly)
+    $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+    if (-not (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        Write-E '影子需要管理员（提升令牌）。请右键"以管理员身份运行"本工具。'; cmd /c pause 2>&1 | Out-Null; return
+    }
+    $isRemote = [bool]$Remote
+    $targetHost = if ($isRemote) { $Remote } else { $env:COMPUTERNAME }
+    if ($isRemote -and $User) { Add-RdpCredential -Server $targetHost -User $User -Password $Password | Out-Null }
+    $targets = if ($isRemote) { if ($User) { @(Get-RdpRemoteSessions -Server $targetHost) } else { @() } } else { @(Get-RdpSessionList | Where-Object { $_.Id -gt 0 -and $_.User -and $_.User -notmatch '^$' }) }
+    if (-not $SessionId) {
+        if ($targets.Count -gt 0) { Write-I "--- 目标主机 $targetHost 可用会话 ---"; $targets | ForEach-Object { Write-I "  $($_.Id). $($_.User)  [$($_.State)] ($($_.Ptr))" }; $in = Read-Host "输入要影子的会话 ID（从上面选一个；回车=取消)" }
+        else { Write-I '未能自动列出目标会话（未缓存凭据或 query session /server 失败）。'; $in = Read-Host "请手动输入目标会话 ID；回车=取消" }
+        if (-not $in -or $in -notmatch '^\d+$') { Write-W '已取消'; return }
+        $SessionId = [int]$in
+    }
+    $fullControl = $true; $noConsent = $true
+    if (-not $isRemote) {
+        $t = $targets | Where-Object { $_.Id -eq $SessionId } | Select-Object -First 1
+        $mode = if ($t) { Get-EffectiveShadowMode -User $t.User } else { $null }
+        $val = if ($ForceNoConsent) { 2 } elseif ($ForceConsent) { 1 } elseif ($mode) { $mode.Value } else { 2 }
+        $fullControl = ($val -eq 1 -or $val -eq 2); $noConsent = ($val -eq 2 -or $val -eq 4)
+        if ($val -eq 0) { Write-W '策略为"禁用"，不发起。'; cmd /c pause 2>&1 | Out-Null; return }
+    } else { if ($ViewOnly) { $fullControl = $false }; if ($ForceConsent) { $noConsent = $false } }
+    $args = @("/shadow:$SessionId")
+    if ($fullControl) { $args += '/control' }
+    if ($noConsent) { $args += '/noConsentPrompt' }
+    if ($isRemote) {
+        Write-I '影子经 SMB/RPC(139/445 + 动态 RPC) 建立，与 RDP 端口无关；被拒请放行「文件和打印机共享」+「远程桌面-影子(RdpSa)」。'
+        $args += "/v:$targetHost"
+        if (-not $User) { $args += '/prompt' }
+    }
+    Write-I "发起: mstsc $($args -join ' ')"
+    try { Start-Process mstsc -ArgumentList $args -ErrorAction Stop; Write-S "已发起影子会话 $SessionId" } catch { Write-E "启动失败: $_" }
+    Write-Host ""; cmd /c pause 2>&1 | Out-Null
+}
+
+function Enable-RdpShadowFirewall {
+    $did = 0
+    if (-not (Get-NetFirewallRule -Name 'RemoteDesktop-Shadow-In-TCP' -EA 0)) {
+        try { New-NetFirewallRule -Name 'RemoteDesktop-Shadow-In-TCP' -DisplayName 'Remote Desktop - Shadow (TCP-In)' -Direction Inbound -Action Allow -Program "$env:SystemRoot\system32\RdpSa.exe" -Profile Any -ErrorAction Stop | Out-Null; $did++ } catch { Write-W "创建 RdpSa 影子规则失败: $($_.Exception.Message)" }
+    } elseif ((Get-NetFirewallRule -Name 'RemoteDesktop-Shadow-In-TCP').Enabled -eq 'False') { Enable-NetFirewallRule -Name 'RemoteDesktop-Shadow-In-TCP' -EA 0; $did++ }
+    Get-NetFirewallRule -Name 'FPS-SMB-In-TCP','FPS-SMB-In-TCP-V2','FPS-SMB-In-TCP-NoScope','FPS-NB_Session-In-TCP','FPS-NB_Session-In-TCP-NoScope','FPS-RPCSS-In-TCP','FPS-RPCSS-In-TCP-V2','FPS-RPCSS-In-TCP-NoScope' -EA 0 | ForEach-Object { if ($_.Enabled -eq 'False') { Enable-NetFirewallRule -Name $_.Name -EA 0 | Out-Null; $did++ } }
+    Write-S "影子防火墙已就绪（新增/启用 $did 条）。"
+    Write-I '包括: 远程桌面-影子(RdpSa) 入站; 文件和打印机共享 SMB(445)/NB-Session(139)/RPC-EPMAP(135)。'
+    Write-I '影子走 SMB/RPC 固定端口，无法自定义；运营商通常在公网封 445/139/RPC，局域网可用，公网请用 VPN/隧道/其它远程协助工具。'
+    Write-Host ""; cmd /c pause 2>&1 | Out-Null
+}
+
+function Show-ShadowDiagnostics {
+    $map = @{0='禁';1='完全/需同意';2='完全/免同意';3='查看/需同意';4='查看/免同意'}
+    $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $isAdmin = (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    Write-I "调用方: $($id.Name)   管理员=$isAdmin"
+    $pol = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' -Name Shadow -ErrorAction SilentlyContinue).Shadow
+    Write-I "Shadow 策略值: $pol ($($map[[int]$pol]))"
+    Write-I "--- RDP-Tcp 监听器 ACL（0x10 = 可影他人会话） ---"
+    try { Get-CimInstance -Namespace root\CIMV2\TerminalServices -ClassName Win32_TSAccount -ErrorAction Stop | Where-Object TerminalName -eq 'RDP-Tcp' | ForEach-Object { $a=(($_.PermissionsAllowed -band 0x10) -ne 0);$d=(($_.PermissionsDenied -band 0x10) -ne 0); Write-I "  $($_.AccountName): 0x10 Allow=$a Deny=$d" } } catch { Write-W "ACL 查询失败: $_" }
+    Write-I "--- 会话 ---"
+    Get-RdpSessionList | Where-Object { $_.Id -gt 0 } | ForEach-Object { Write-I "  $($_.Id). $($_.User) ($($_.State))" }
+    Write-I "--- 影子防火墙(走 SMB/RPC) ---"
+    $sh=Get-NetFirewallRule -Name 'RemoteDesktop-Shadow-In-TCP' -EA 0; $smb=Get-NetFirewallRule -Name 'FPS-SMB-In-TCP' -EA 0; $rpc=Get-NetFirewallRule -Name 'FPS-RPCSS-In-TCP' -EA 0
+    Write-I "  RemoteDesktop-Shadow(RdpSa): " + $(if($sh -and $sh.Enabled -eq 'True'){'已启用'}else{'未启用'})
+    Write-I "  SMB-In(445): " + $(if($smb -and $smb.Enabled -eq 'True'){'已启用'}else{'未启用'}) + "   RPC-EPMAP(135): " + $(if($rpc -and $rpc.Enabled -eq 'True'){'已启用'}else{'未启用'})
+    Write-W "结论: 本机(console/RDP)与跨机影子可用；跨机需目标机授权账户凭据(/prompt 或 -User)；console 会话也能影。是否弹‘同意’由 Shadow 值决定。"
+    Write-Host ""; cmd /c pause 2>&1 | Out-Null
+}
+
 function Set-RdpShadowing {
     do {
         $su = Get-ShadowUi
@@ -244,12 +360,27 @@ function Set-RdpShadowing {
         Write-Host "+----------------------------------------------------+" -ForegroundColor Cyan
         Write-Host "|  1. $(S 'global')" -ForegroundColor Yellow
         Write-Host "|  2. $(S 'user')" -ForegroundColor Yellow
+        Write-Host "|  3. 发起影子-本机" -ForegroundColor Yellow
+        Write-Host "|  4. 发起影子-远程 (mstsc /v /shadow /prompt)" -ForegroundColor Yellow
+        Write-Host "|  5. 影子诊断 (Diagnostics)" -ForegroundColor Yellow
+        Write-Host "|  6. 启用影子防火墙 (SMB/RPC + RdpSa)" -ForegroundColor Yellow
         Write-Host "|  0. $(T 'back_main')" -ForegroundColor Green
         Write-Host "+----------------------------------------------------+" -ForegroundColor Cyan
         $c = Read-Host "> "
         switch ($c) {
             "1" { Set-ShadowGlobalMenu }
             "2" { Set-ShadowUserMenu }
+            "3" { Invoke-RdpShadow }
+            "4" {
+                $rh = Read-Host "远程主机 (IP 或主机名)"
+                if (-not $rh) { Write-W '已取消'; continue }
+                $ru = Read-Host "目标为授权账户 (留空则 /prompt 弹窗输入)"
+                $rp = ''
+                if ($ru) { $rp = Read-Host "该账户密码 (留空则不缓存)" }
+                Invoke-RdpShadow -Remote $rh -User $ru -Password $rp
+            }
+            "5" { Show-ShadowDiagnostics }
+            "6" { Enable-RdpShadowFirewall }
             default { if ($c -ne '0') { Write-W (T 'inv_opt'); Start-Sleep -Milliseconds 800 } }
         }
     } while ($c -ne '0')

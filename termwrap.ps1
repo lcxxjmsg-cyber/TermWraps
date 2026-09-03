@@ -43,7 +43,7 @@ if (-not $script:IsAdmin -and -not $env:TERMWRAP_NO_ELEVATE) {
     }
 }
 
-$script:VERSION = '0.2.0'
+$script:VERSION = '0.3.0'
 $script:SCRIPT_DIR = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 $script:CORE_DIR = Join-Path $script:SCRIPT_DIR 'src\core'
 

@@ -37,6 +37,10 @@ x86\ TermWrap.dll  Zydis.dll
 - **UmWrap 判定**：Home/Server 版才需要 UmWrap（Pro/Ent 摄像头/USB 原生可用）；部署菜单按 SKU 提示。
 - **Zydis.dll**：已静态链接（自建管线），不再需要分发——依赖仅系统 msvcrt/kernel32/advapi32。
 - **Watchdog 语义（TermWrap 版）**：无 INI → 健康判定 = 服务运行 + ServiceDll 指向正确 + 监听 + 握手；故障恢复 = 重写 ServiceDll + 重启服务。
+- **影子 / 远程控制（已实测可用）**：本机（console/RDP）与**跨机远程**都支持。菜单「影子」提供：全局/用户级策略、发起影子-本机、发起影子-远程（`mstsc /v:<host> /shadow:<id> /control /noConsentPrompt /prompt`）、诊断、启用影子防火墙。
+  - 跨机需**目标机授权账户**（工具 `-User/-Password` 走 `cmdkey` 缓存，或加 `/prompt`）；**console 会话也能被影**（部分 MS 文档称不能，实测本机可）。
+  - 影子走 **SMB/RPC(139/445 + 动态 RPC)**，与 RDP 端口无关；需放行「文件和打印机共享」+「远程桌面-影子(RdpSa)」。**端口固定不可改**；公网被运营商封 445/139/RPC，建议 **VPN/隧道**。
+  - 目标会话须为**活动会话**；同一会话只能被影一次（RDP 协议限制）；Shadow=2=完全控制/免同意。
 
 ## 4. 待 VM 实测项
 
