@@ -133,6 +133,7 @@ if(!$svc-or$svc.Status-ne'Running'){w"TermService not running; restarting";Resta
 $p=(Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name PortNumber -EA 0).PortNumber
 if(!$p){$p=3389}
 if(!(Get-NetTCPConnection -State Listen -LocalPort $p -EA 0)){w"listener down; restarting";Restart-Service TermService -Force -EA 0;exit 0}
+try{if(-not(Get-NetFirewallRule -Name "rdpwarp-RDP-TCP-$p-In" -EA 0)){New-NetFirewallRule -Name "rdpwarp-RDP-TCP-$p-In" -DisplayName "RDP TCP $p (rdpwarp)" -Direction Inbound -Action Allow -Protocol TCP -LocalPort $p -Profile Any -EA 0|Out-Null;w"Firewall rule for RDP port $p recreated"}}catch{w"Firewall ensure failed: $_"}
 $c=New-Object System.Net.Sockets.TcpClient
 try{$h=$c.BeginConnect('127.0.0.1',$p,$null,$null);if(!$h.AsyncWaitHandle.WaitOne(2500)){w"handshake timeout; restarting";Restart-Service TermService -Force -EA 0;exit 0};$c.EndConnect($h);$st=$c.GetStream();[byte[]]$r=0x03,0x00,0x00,0x13,0x0e,0xe0,0x00,0x00,0x00,0x00,0x00,0x01,0x00,0x08,0x00,0x03,0x00,0x00,0x00;$st.Write($r,0,$r.Length);$b=New-Object byte[] 64;$n=$st.Read($b,0,64);if($n-ge11-and$b[0]-eq3){w"healthy (termsrv OK)"}else{w"handshake fail; restarting";Restart-Service TermService -Force -EA 0}}catch{w"check error: $_; restarting";Restart-Service TermService -Force -EA 0}finally{$c.Close()}
 '@
