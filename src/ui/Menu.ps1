@@ -33,7 +33,6 @@ function Show-MainMenu {
         Write-Host "|  $(T 'status_umwrap'): " -NoNewline -ForegroundColor DarkGray
         Write-Host $(if ($s.UmWrap) { 'enabled' } else { '-' }) -NoNewline -ForegroundColor $uc
         Write-Host "  $(T 'wrapper'): " -NoNewline -ForegroundColor DarkGray; Write-Host 'TermWrap' -ForegroundColor Green
-        Write-Host "  $(T 'watchdog'): " -NoNewline -ForegroundColor DarkGray; Write-Host $(if ($s.Watchdog) { T 'active' } else { T 'inactive' }) -ForegroundColor $(if ($s.Watchdog) { 'Green' } else { 'Yellow' })
         Write-Host "  $(T 'sessions'): $($s.Sessions.Count)" -ForegroundColor DarkGray
         if ($s.Change.Changed) { Write-Host "  [!] $(T 'status_changed'): $($s.Change.Previous) -> $($s.Change.Current)" -ForegroundColor Yellow }
         if ($s.HealthMessage -and $s.HealthState -ne 'Healthy') { Write-Host "  [!] $($s.HealthMessage)" -ForegroundColor Yellow }
@@ -70,9 +69,6 @@ function Show-MainMenu {
         Write-Host " $(T 'menu_port_title')" -ForegroundColor White
         Write-Host "     $(T 'menu_port_desc')" -ForegroundColor DarkGray
         Write-Host "  " -NoNewline; Write-Host "8." -NoNewline -ForegroundColor Yellow
-        Write-Host " $(T 'menu_watchdog_title')" -ForegroundColor White
-        Write-Host "     $(T 'menu_watchdog_desc')" -ForegroundColor DarkGray
-        Write-Host "  " -NoNewline; Write-Host "9." -NoNewline -ForegroundColor Yellow
         Write-Host " $(T 'menu_restart')" -ForegroundColor White
         Write-Host "     $(T 'menu_restart_desc')" -ForegroundColor DarkGray
         Write-Host "  " -NoNewline; Write-Host "U." -NoNewline -ForegroundColor Magenta
@@ -104,8 +100,11 @@ function Invoke-TermWrapInstall {
     $um = ($arch -eq 'x64')
     $end = ($arch -eq 'x64')
     $ok = Deploy-TermWrapBinaries -UmWrap:$um -EndpWrap:$end
+    if (-not $ok -and @(Test-ForeignWrapper).Count -gt 0) {
+        $ans = Read-Host "> 强制覆盖他家 wrapper 并继续? [Y/N]"
+        if ($ans -match '^[Yy]') { $ok = Deploy-TermWrapBinaries -UmWrap:$um -EndpWrap:$end -Force }
+    }
     if ($ok) {
-        Register-TermWrapWatchdog
         Write-S "$(T 'install_done_hint')"
     }
     Write-Host ""; cmd /c pause 2>&1 | Out-Null
@@ -128,7 +127,6 @@ function Invoke-TermWrapUninstall {
     Write-Host "|  $(T 'menu_uninstall')" -ForegroundColor Cyan
     Write-Host "+----------------------------------------------------+" -ForegroundColor Cyan
     if (Uninstall-TermWrapBinaries) {
-        Unregister-TermWrapWatchdog
         Write-S "$(T 'uninstall_done_hint')"
     }
     Write-Host ""; cmd /c pause 2>&1 | Out-Null
@@ -202,22 +200,7 @@ function Invoke-InteractiveMenu {
                 "5" { Set-RdpDisplay }
                 "6" { Set-RdpTimeouts }
                 "7" { Set-RdpPort }
-                "8" {
-                    Clear-Host
-                    Write-Host "+----------------------------------------------------+" -ForegroundColor Cyan
-                    $wdStatus = if ($s.Watchdog) { T 'active' } else { T 'inactive' }
-                    Write-Host "|  $(T 'wd_title'): $wdStatus" -ForegroundColor Cyan
-                    Write-Host "+----------------------------------------------------+" -ForegroundColor Cyan
-                    Write-Host "|  1. $(T 'wd_reg')" -ForegroundColor Yellow
-                    Write-Host "|  2. $(T 'wd_unr')" -ForegroundColor Red
-                    Write-Host "|  0. $(T 'back_main')" -ForegroundColor Green
-                    Write-Host "+----------------------------------------------------+" -ForegroundColor Cyan
-                    $wc = Read-Host "> "
-                    if ($wc -eq '1') { Register-TermWrapWatchdog }
-                    elseif ($wc -eq '2') { Unregister-TermWrapWatchdog }
-                    Write-Host ""; cmd /c pause 2>&1 | Out-Null
-                }
-                "9" { Clear-Host; Restart-RdpService; Write-S $(T 'restart_done'); Write-Host ""; cmd /c pause 2>&1 | Out-Null }
+                "8" { Clear-Host; Restart-RdpService; Write-S $(T 'restart_done'); Write-Host ""; cmd /c pause 2>&1 | Out-Null }
                 "u" { Show-UmWrapMenu }
                 "U" { Show-UmWrapMenu }
                 "d" { Show-RdpRedirectionMenu }
@@ -240,7 +223,8 @@ function Show-Help {
     Write-Host ""
     Write-Host "USAGE:"
     Write-Host "  .\termwrap.ps1           Interactive menu (live status)"
-    Write-Host "  .\termwrap.ps1 -Install  Silent install + watchdog"
+    Write-Host "  .\termwrap.ps1 -Install  Silent install"
+    Write-Host "  .\termwrap.ps1 -Install -Force  Silent install, override a foreign wrapper"
     Write-Host "  .\termwrap.ps1 -Uninstall  Clean removal"
     Write-Host "  .\termwrap.ps1 -Help     This help"
 }

@@ -1,11 +1,26 @@
-﻿# Core.Health.ps1 - TermWrap 健康分级 + termsrv 变化检测 + 看门狗
+﻿# Core.Health.ps1 - TermWrap 健康分级 + termsrv 变化检测
 # 语义重写：无 INI → 三元健康分级（Healthy / Degraded / Failed）
-# 复用 rdpwarps.ps1 的：Test-RdpProtocolHandshake（握手）、会话枚举、计划任务注册模式
+# 复用 rdpwarps.ps1 的：Test-RdpProtocolHandshake（握手）、会话枚举
+# 无看门狗：TermWrap.dll 动态自适应 termsrv，崩溃由 SCM FailureActions 自恢复
 
-$script:WATCHDOG_TASK = 'termwrap-Watchdog'
-$script:WATCHDOG_SCRIPT = "$env:ProgramData\rdpwarp\watchdog.ps1"
-$script:STATE_DIR = "$env:ProgramData\rdpwarp"
+$script:STATE_DIR = Join-Path $env:ProgramData 'termwrap'
 $script:STATE_TERMSRV = Join-Path $script:STATE_DIR 'termsrv-last.txt'
+$script:LEGACY_STATE_DIR = Join-Path $env:ProgramData 'rdpwarp'
+
+function Initialize-TermWrapStateDir {
+    if (-not (Test-Path -LiteralPath $script:STATE_DIR)) {
+        New-Item -ItemType Directory -Path $script:STATE_DIR -Force -ErrorAction SilentlyContinue | Out-Null
+    }
+    foreach ($name in @('termwrap-state.json','termsrv-last.txt')) {
+        $new = Join-Path $script:STATE_DIR $name
+        $old = Join-Path $script:LEGACY_STATE_DIR $name
+        if ((-not (Test-Path -LiteralPath $new)) -and (Test-Path -LiteralPath $old)) {
+            Move-Item -LiteralPath $old -Destination $new -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+Initialize-TermWrapStateDir
 
 function Test-RdpProtocolHandshake {
     param([int]$Port,[int]$TimeoutMs=2500)
@@ -91,8 +106,6 @@ function Get-TermWrapStatus {
             }
         }
     } catch { $s.Sessions = @() }
-    $wd = Get-ScheduledTask -TaskName $script:WATCHDOG_TASK -ErrorAction SilentlyContinue
-    $s.Watchdog = ($null -ne $wd)
     $s.Change = Get-TermsrvChangeState
     return $s
 }
@@ -115,47 +128,4 @@ function Set-TermsrvChangeState {
     } catch { return $false }
 }
 
-function Register-TermWrapWatchdog {
-    param([switch]$Quiet)
-    $scriptBody = @'
-$l='C:\rdpwarp\watchdog.log'
-New-Item 'C:\rdpwarp' -ItemType Directory -Force -EA 0|Out-Null
-function w{param($m)"$(Get-Date -F 'yyyy-MM-dd HH:mm:ss') $m"|Out-File $l -Append}
-$dll="$env:ProgramFiles\RDP Wrapper\TermWrap.dll"
-if(!(Test-Path $dll)){w"TermWrap.dll missing";exit 0}
-$svcDll=(Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\TermService\Parameters' -Name ServiceDll -EA 0).ServiceDll
-if($svcDll -notlike '*TermWrap.dll'){
-  w"ServiceDll not pointing to TermWrap.dll (repairing)";try{Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\TermService\Parameters' -Name ServiceDll -Value '%ProgramFiles%\RDP Wrapper\TermWrap.dll' -EA Stop;w"ServiceDll repaired";Restart-Service TermService -Force -EA 0;Start-Sleep 2}catch{w"repair failed: $_"};exit 0}
-$stateFile="$env:ProgramData\rdpwarp\termwrap-state.json"
-if(Test-Path $stateFile){try{$st=Get-Content $stateFile -Raw -EA 0|ConvertFrom-Json;if($st.FileHashes.TermWrap.dll){$h=(Get-FileHash $dll -Algorithm SHA256 -EA 0).Hash;if($h-and$h-ne$st.FileHashes.TermWrap.dll){w"TermWrap.dll hash mismatch (integrity alert)"}}}catch{}}
-$svc=Get-Service TermService -EA 0
-if(!$svc-or$svc.Status-ne'Running'){w"TermService not running; restarting";Restart-Service TermService -Force -EA 0;exit 0}
-$p=(Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name PortNumber -EA 0).PortNumber
-if(!$p){$p=3389}
-if(!(Get-NetTCPConnection -State Listen -LocalPort $p -EA 0)){w"listener down; restarting";Restart-Service TermService -Force -EA 0;exit 0}
-try{if(-not(Get-NetFirewallRule -Name "rdpwarp-RDP-TCP-$p-In" -EA 0)){New-NetFirewallRule -Name "rdpwarp-RDP-TCP-$p-In" -DisplayName "RDP TCP $p (rdpwarp)" -Direction Inbound -Action Allow -Protocol TCP -LocalPort $p -Profile Any -EA 0|Out-Null;w"Firewall rule for RDP port $p recreated"}}catch{w"Firewall ensure failed: $_"}
-$c=New-Object System.Net.Sockets.TcpClient
-try{$h=$c.BeginConnect('127.0.0.1',$p,$null,$null);if(!$h.AsyncWaitHandle.WaitOne(2500)){w"handshake timeout; restarting";Restart-Service TermService -Force -EA 0;exit 0};$c.EndConnect($h);$st=$c.GetStream();[byte[]]$r=0x03,0x00,0x00,0x13,0x0e,0xe0,0x00,0x00,0x00,0x00,0x00,0x01,0x00,0x08,0x00,0x03,0x00,0x00,0x00;$st.Write($r,0,$r.Length);$b=New-Object byte[] 64;$n=$st.Read($b,0,64);if($n-ge11-and$b[0]-eq3){w"healthy (termsrv OK)"}else{w"handshake fail; restarting";Restart-Service TermService -Force -EA 0}}catch{w"check error: $_; restarting";Restart-Service TermService -Force -EA 0}finally{$c.Close()}
-'@
-    try {
-        New-Item -ItemType Directory -Path (Split-Path $script:WATCHDOG_SCRIPT -Parent) -Force | Out-Null
-        $scriptBody | Out-File $script:WATCHDOG_SCRIPT -Encoding ASCII -Force
-        $a = New-ScheduledTaskAction -Execute powershell.exe -Argument "-NoP -W Hidden -Exec Bypass -File `"$($script:WATCHDOG_SCRIPT)`""
-        $t1 = New-ScheduledTaskTrigger -AtStartup
-        $t2 = New-ScheduledTaskTrigger -Daily -At 03:00
-        $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -Hidden
-        Unregister-ScheduledTask -TaskName $script:WATCHDOG_TASK -Confirm:$false -ErrorAction SilentlyContinue
-        Register-ScheduledTask -TaskName $script:WATCHDOG_TASK -Action $a -Trigger $t1,$t2 -Settings $set -User "NT AUTHORITY\SYSTEM" -RunLevel Highest -Force | Out-Null
-        if (-not $Quiet) { Write-S "看门狗已注册 ($($script:WATCHDOG_TASK))" }
-        return $true
-    } catch {
-        if (-not $Quiet) { Write-E "看门狗注册失败: $_" }
-        return $false
-    }
-}
-
-function Unregister-TermWrapWatchdog {
-    Unregister-ScheduledTask -TaskName $script:WATCHDOG_TASK -Confirm:$false -ErrorAction SilentlyContinue
-    if (Test-Path $script:WATCHDOG_SCRIPT) { Remove-Item $script:WATCHDOG_SCRIPT -Force -ErrorAction SilentlyContinue }
-    Write-S "看门狗已注销"
-}
+# 看门狗已移除：TermWrap.dll 动态自适应 termsrv，服务崩溃由 SCM FailureActions 自恢复。

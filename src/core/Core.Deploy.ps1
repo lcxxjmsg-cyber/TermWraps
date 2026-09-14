@@ -5,7 +5,7 @@ $script:RDPWRAP_DIR = "$env:ProgramFiles\RDP Wrapper"
 $script:RDPWRAP_TERMSRV = "$env:ProgramFiles\RDP Wrapper\TermWrap.dll"
 $script:RDPWRAP_UMWRAP = "$env:ProgramFiles\RDP Wrapper\UmWrap.dll"
 $script:RDPWRAP_ENDPWRAP = "$env:ProgramFiles\RDP Wrapper\EndpWrap.dll"
-$script:TERMWRAP_STATE = "$env:ProgramData\rdpwarp\termwrap-state.json"
+$script:TERMWRAP_STATE = "$env:ProgramData\termwrap\termwrap-state.json"
 
 $script:REG_UMRDP_PARAMS = 'HKLM:\SYSTEM\CurrentControlSet\Services\UmRdpService\Parameters'
 $script:REG_AUDIO_ENUM = "$REG_RDP_WS\AudioEnumeratorDll"
@@ -46,7 +46,7 @@ function Save-TermWrapState {
     $exclusions = @()
     if (Get-Command Get-MpPreference -ErrorAction SilentlyContinue) {
         $existing = @((Get-MpPreference -ErrorAction SilentlyContinue).ExclusionPath)
-        foreach ($path in @($script:RDPWRAP_DIR, 'C:\rdpwarp', "$env:ProgramFiles\RDP Wrapper")) {
+        foreach ($path in @($script:RDPWRAP_DIR, 'C:\termwrap', "$env:ProgramFiles\RDP Wrapper")) {
             if ($existing -notcontains $path) { $exclusions += $path }
         }
     }
@@ -75,6 +75,19 @@ function Set-TermServiceDll {
     } catch { Write-E "ServiceDll 写入失败 ($Path): $_"; return $false }
 }
 
+function Test-ForeignWrapper {
+    # 检测是否有其他 RDP wrapper 正在占用（本工具与它们互斥）
+    $foreign = @()
+    $ts = (Get-ItemProperty -Path $REG_TS -Name ServiceDll -ErrorAction SilentlyContinue).ServiceDll
+    $um = (Get-ItemProperty -Path $script:REG_UMRDP_PARAMS -Name ServiceDll -ErrorAction SilentlyContinue).ServiceDll
+    if ($ts -and $ts -notmatch 'termsrv\.dll$' -and $ts -notmatch 'TermWrap\.dll$') { $foreign += "TermService.ServiceDll = $ts" }
+    if ($um -and $um -notmatch 'umrdp\.dll$' -and $um -notmatch 'UmWrap\.dll$') { $foreign += "UmRdpService.ServiceDll = $um" }
+    foreach ($marker in @("$env:ProgramFiles\rdpwarp\rdpwrap.dll", "$env:ProgramFiles\rdpwarp\rdpwrap.ini")) {
+        if (Test-Path -LiteralPath $marker) { $foreign += "foreign wrapper file: $marker" }
+    }
+    return $foreign
+}
+
 function Stop-RdpService {
     Write-I "停止 RDP 服务..."
     Stop-Service -Name UmRdpService -Force -ErrorAction SilentlyContinue
@@ -99,10 +112,22 @@ function Restart-RdpService {
 }
 
 function Deploy-TermWrapBinaries {
-    param([switch]$UmWrap,[switch]$EndpWrap,[switch]$SkipRestart,[switch]$KeepOnFail)
+    param([switch]$UmWrap,[switch]$EndpWrap,[switch]$SkipRestart,[switch]$KeepOnFail,[switch]$Force)
     $arch = if ([Environment]::Is64BitProcess) { 'x64' } else { 'x86' }
     if (-not (Test-Admin)) { Write-E "需要管理员权限"; return $false }
     if (-not (Test-TermWrapBinaries $arch)) { Write-E "TermWrap 二进制缺失或哈希不符 ($arch)"; return $false }
+
+    $foreign = @(Test-ForeignWrapper)
+    if ($foreign.Count -gt 0 -and -not $Force) {
+        Write-W "检测到其他 RDP wrapper 正在占用（本工具与它们互斥）："
+        foreach ($f in $foreign) { Write-W "  - $f" }
+        Write-E "请先卸载对方（例如 rdpwarps.ps1 -Uninstall），或加 -Force 强制覆盖。"
+        return $false
+    }
+    if ($foreign.Count -gt 0) {
+        Write-W "已按 -Force 覆盖其他 wrapper 的占用（原状态将写入备份，可回滚）"
+    }
+
 
     $origTs = (Get-ItemProperty -Path $REG_TS -Name ServiceDll -ErrorAction SilentlyContinue).ServiceDll
     $origUm = (Get-ItemProperty -Path $script:REG_UMRDP_PARAMS -Name ServiceDll -ErrorAction SilentlyContinue).ServiceDll

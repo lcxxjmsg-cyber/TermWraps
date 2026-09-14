@@ -11,14 +11,16 @@
     src/ui/    Menu.ps1
 .EXAMPLE
     .\termwrap.ps1              # 交互式菜单（自动提权）
-    .\termwrap.ps1 -Install     # 静默安装 + 看门狗
+    .\termwrap.ps1 -Install     # 静默安装
+    .\termwrap.ps1 -Install -Force  # 静默安装并强制覆盖他家 wrapper
     .\termwrap.ps1 -Uninstall   # 干净卸载
     .\termwrap.ps1 -Help        # 用法说明
 #>
 param(
     [switch]$Install,
     [switch]$Uninstall,
-    [switch]$Help
+    [switch]$Help,
+    [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
@@ -33,6 +35,7 @@ if (-not $script:IsAdmin -and -not $env:TERMWRAP_NO_ELEVATE) {
             if ($Install) { $argList += '-Install' }
             if ($Uninstall) { $argList += '-Uninstall' }
             if ($Help) { $argList += '-Help' }
+            if ($Force) { $argList += '-Force' }
             $p = Start-Process powershell -Verb RunAs -ArgumentList $argList -PassThru -ErrorAction Stop
             $p.WaitForExit()
             exit $p.ExitCode
@@ -43,7 +46,7 @@ if (-not $script:IsAdmin -and -not $env:TERMWRAP_NO_ELEVATE) {
     }
 }
 
-$script:VERSION = '0.3.0'
+$script:VERSION = '0.3.1'
 $script:SCRIPT_DIR = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 $script:CORE_DIR = Join-Path $script:SCRIPT_DIR 'src\core'
 
@@ -58,13 +61,13 @@ if ($Help) { Show-Help; return }
 if ($Install) {
     if (-not $script:IsAdmin) { Write-Host "需要管理员权限"; exit 1 }
     $arch = if ([Environment]::Is64BitProcess) { 'x64' } else { 'x86' }
-    $ok = Deploy-TermWrapBinaries -UmWrap:($arch -eq 'x64') -EndpWrap:($arch -eq 'x64')
-    if ($ok) { Register-TermWrapWatchdog -Quiet; Write-Host "termwrap 安装完成" }
+    $ok = Deploy-TermWrapBinaries -UmWrap:($arch -eq 'x64') -EndpWrap:($arch -eq 'x64') -Force:$Force
+    if ($ok) { Write-Host "termwrap 安装完成" }
     exit $(if ($ok) { 0 } else { 1 })
 }
 if ($Uninstall) {
     if (-not $script:IsAdmin) { Write-Host "需要管理员权限"; exit 1 }
-    if (Uninstall-TermWrapBinaries) { Unregister-TermWrapWatchdog }
+    Uninstall-TermWrapBinaries | Out-Null
     exit 0
 }
 Invoke-InteractiveMenu
